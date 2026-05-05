@@ -8,10 +8,10 @@ interface MapProps {
 
 const MapComponent: React.FC<MapProps> = ({ wktString }) => {
   const mapRef = useRef<HTMLDivElement>(null);
-  const amapInstance = useRef<any>(null);
+  const mapInstance = useRef<AMap.Map | null>(null);
+  const polygonRef = useRef<AMap.Polygon | null>(null);
 
   useEffect(() => {
-    // 设置安全密钥（自2021年12月2日起，必须设置）
     (window as any)._AMapSecurityConfig = {
       securityJsCode: import.meta.env.VITE_AMAP_SECURITY_CODE,
     };
@@ -21,42 +21,56 @@ const MapComponent: React.FC<MapProps> = ({ wktString }) => {
       version: '2.0',
       plugins: ['AMap.Polygon'],
     })
-      .then((AMap) => {
+      .then((AMapInstance) => {
         if (!mapRef.current) return;
 
-        const map = new AMap.Map(mapRef.current, {
+        const map = new AMapInstance.Map(mapRef.current, {
           viewMode: '3D',
-          zoom: 10,
-          center: [116.397428, 39.90923], // 默认北京
+          zoom: 12,
+          center: [116.397428, 39.90923],
+          // 隐藏默认的缩放控件（如果需要界面更清爽）
+          zoomEnable: true,
         });
 
-        amapInstance.current = map;
-
-        // 绘制 WKT
-        drawWKT(AMap, map, wktString);
+        mapInstance.current = map;
+        if (wktString) drawWKT(wktString);
       })
-      .catch((e) => {
-        console.error('地图加载失败:', e);
-      });
+      .catch((e) => console.error(e));
 
-    return () => {
-      amapInstance.current?.destroy();
-    };
+    return () => mapInstance.current?.destroy();
   }, []);
 
-  const drawWKT = (AMap: any, map: any, wkt: string) => {
+  // 2. 监听 wktString 变化并重绘
+  useEffect(() => {
+    if (mapInstance.current && wktString) {
+      drawWKT(wktString);
+    }
+  }, [wktString]);
+
+  const drawWKT = (wkt: string) => {
+    const map = mapInstance.current;
+    if (!map) return;
+
     try {
-      // 1. 将 WKT 解析为 GeoJSON 对象
+      // 解析 WKT
       const geojson: any = parse(wkt);
       
-      // 2. 转换坐标格式
-      // 注意：WKT 是 [lon, lat]，高德也是 [lon, lat]
-      // 但 GeoJSON 的 Polygon 坐标结构是 [[[lng, lat], ...]]
-      const path = geojson.coordinates[0].map((coord: number[]) => {
+      // 验证是否为 Polygon
+      if (geojson.type !== 'Polygon') {
+        alert('目前仅支持绘制 POLYGON 格式');
+        return;
+      }
+
+      const path = geojson.coordinates[0].map((coord: [number, number]) => {
         return new AMap.LngLat(coord[0], coord[1]);
       });
 
-      // 3. 创建多边形
+      // 清理旧的多边形
+      if (polygonRef.current) {
+        map.remove(polygonRef.current);
+      }
+
+      // 创建新的多边形
       const polygon = new AMap.Polygon({
         path: path,
         fillColor: '#1791fc',
@@ -66,15 +80,27 @@ const MapComponent: React.FC<MapProps> = ({ wktString }) => {
       });
 
       map.add(polygon);
-      
-      // 4. 自动缩放到图形可见范围
+      polygonRef.current = polygon; // 保存引用
+
+      // 自动缩放视角
       map.setFitView([polygon]);
+      
     } catch (error) {
-      console.error('WKT 解析或绘制失败:', error);
+      console.error('WKT 解析失败:', error);
+      alert('WKT 格式错误，请检查输入');
     }
   };
 
-  return <div ref={mapRef} style={{ width: '100%', height: '500px' }} />;
+  return (
+    <div 
+      ref={mapRef} 
+      style={{ 
+        width: '100%', 
+        height: '100%', // 改为 100% 以填充父容器
+        backgroundColor: '#f0f0f0' 
+      }} 
+    />
+  );
 };
 
 export default MapComponent;
